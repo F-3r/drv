@@ -1,0 +1,129 @@
+#!/usr/bin/bash 
+
+ABOUT="\n
+DragonRuby Version (Manager) \n
+by @f-3r (https://github.com/f-3r/drv)
+"
+HELP="\n
+Available commands:\n
+\`drv versions\` => list all installed versions \n
+\`drv set <version>\` => activates <version> for the current project (directory)\n
+\`drv run [path-to-game-folder]\` => runs the game in the game folder or in current dir using the activated version \n
+\`drv install <zip-file|dir>\` => installs the DragonRuby version in the zip file \n
+"
+INSTALL_DIR="$HOME/.drv/versions"
+VERSIONS=()
+
+function reload_versions () {
+    VERSIONS=()
+    for V in $INSTALL_DIR/*
+    do
+      VERSIONS+=(`basename $V`)
+    done
+}
+
+function list_versions ()
+{
+    reload_versions
+
+    for version in "${VERSIONS[@]}"
+    do 
+      echo "* $version"
+    done
+}
+
+function validate_version () {
+    reload_versions
+    
+    if [[ " ${VERSIONS[@]} " =~ " $1 " ]]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+function set_version ()
+{
+    validate_version $1 || {
+        echo "DragonRuby version $1 is not installed. Currently installed versions are:"
+        list_versions
+        exit 1
+    }
+    echo $1 > .drv
+    echo "Project set to use DragonRuby version `cat .drv`"
+}
+
+function run_game ()
+{
+    local GAME_DIR="${1:-.}"
+    local DRVFILE="$GAME_DIR/.drv"
+
+    [[ -f "$DRVFILE" ]] || {
+        echo "No .drv file found in this project. Use \`drv set <version>\` to set it"
+        exit 1
+    }
+
+    local CURRENT_VERSION=`cat $DRVFILE`
+    PATH=$INSTALL_DIR/$CURRENT_VERSION:$PATH dragonruby $GAME_DIR
+}
+
+function install_version ()
+{
+    local SOURCE=$1
+
+    [[ -d "$SOURCE" ]] || {
+        echo "The path is not a DragonRuby installation directory"
+        exit 1
+    }
+    [[ -f "$SOURCE/dragonruby" ]] || {
+        echo "There's not dragonruby executable. Is $SOURCE a DragonRuby installation directory?"
+        exit 1
+    }
+
+    local VERSION=`head -n 1 $1/CHANGELOG-CURR.txt | cut -d" " -f2 | sed 's/ *$//g'`
+    echo "DragonRuby $VERSION detected."
+
+    local TARGET=$INSTALL_DIR/$VERSION
+
+    [[ -d $TARGET ]] && {
+        echo "DragonRuby $VERSION is already installed. You can uninstall it running \`drv uninstall $VERSION\`"
+        exit 1
+    }
+
+    cp -r $SOURCE $TARGET 
+    set_version $VERSION
+    echo "DragonRuby $VERSION installed and activated."
+}
+
+function uninstall_version () 
+{
+    rm -r "$INSTALL_DIR/$1"
+    echo "DragonRuby version $1 uninstalled"
+}
+
+cmd=$1
+
+case "$cmd" in
+  list) 
+    list_versions
+  ;;
+  set)
+    set_version $2
+  ;;
+  install)
+    install_version $2
+  ;;
+  uninstall)
+    uninstall_version $2
+  ;;
+  run)
+    run_game $2
+  ;;
+  "")
+    echo -e $ABOUT
+    echo -e $HELP
+  ;;
+  *)
+  echo "invalid command \`$cmd\`. Available commands are: "
+  echo -e $HELP
+esac
