@@ -1,4 +1,4 @@
-#!/usr/bin/bash 
+#!/usr/bin/bash
 
 ABOUT="\n
 DragonRuby Version (Manager) \n
@@ -7,14 +7,22 @@ by @f-3r (https://github.com/f-3r/drv)
 HELP="\n
 Available commands:\n
 \`drv versions\` => list all installed versions \n
-\`drv set <version>\` => activates <version> for the current project (directory)\n
-\`drv run [path-to-game-folder]\` => runs the game in the game folder or in current dir using the activated version \n
-\`drv install <zip-file|dir>\` => installs the DragonRuby version in the zip file \n
+\`drv use <version>\` => activates <version>\n
+\`drv install <zip-file>\` => installs the DragonRuby version in the zip file \n
+\`drv setup <directory> <version>\` => creates a new project skeleton using the specified DragonRuby version.
+\n
+\`drv\` will automatically detect \`.drv\` file in the root of you project \n
+and set the version. \n
+If you set up your projects using \`drv setup\` you should be all set.
 "
+
 INSTALL_DIR="$HOME/.drv/versions"
+GIT_IGNORE=".dragonruby\nbuilds\ndocs\ninclude\nsamples\nCHANGELOG*\nconsole-logo.png\nctags*\ndragonruby*\neula.txt\nffmpeg\nfont.ttf\nlogs\nmygame-template\nopen-source-licenses.txt\ntmp\nVERSION.txt"
+
 VERSIONS=()
 
-function reload_versions () {
+function drv__reload_versions()
+{
     VERSIONS=()
     for V in $INSTALL_DIR/*
     do
@@ -22,19 +30,24 @@ function reload_versions () {
     done
 }
 
-function list_versions ()
+function drv__list_versions()
 {
-    reload_versions
-
-    for version in "${VERSIONS[@]}"
-    do 
-      echo "* $version"
+    drv__reload_versions
+    echo -e "Installed DragonRuby versions:\n"
+    for V in "${VERSIONS[@]}"
+    do
+        if [[ "$V" == "$DRAGON_RUBY_VERSION" ]]; then
+            echo " => $V"
+        else
+            echo " -  $V"
+        fi
     done
 }
 
-function validate_version () {
-    reload_versions
-    
+function drv__validate_version()
+{
+    drv__reload_versions
+
     if [[ " ${VERSIONS[@]} " =~ " $1 " ]]; then
         return 0
     else
@@ -42,88 +55,148 @@ function validate_version () {
     fi
 }
 
-function set_version ()
+function drv__use_version()
 {
-    validate_version $1 || {
+    drv__validate_version $1 || {
         echo "DragonRuby version $1 is not installed. Currently installed versions are:"
-        list_versions
-        exit 1
+        drv__list_versions
+        return 1
     }
-    echo $1 > .drv
-    echo "Project set to use DragonRuby version `cat .drv`"
+
+    export DRAGON_RUBY_VERSION=$1
+    export DRAGON_RUBY_PATH=$INSTALL_DIR/$DRAGON_RUBY_VERSION
+    export PATH=$DRAGON_RUBY_PATH:$PATH
+
+    echo "DragonRuby version $1 activated."
+    echo 'You can now run `dragonruby <your-game-dir>` to start your game'
 }
 
-function run_game ()
+function drv__install_version()
 {
-    local GAME_DIR="${1:-.}"
-    local DRVFILE="$GAME_DIR/.drv"
+    DR_ZIP=$1
 
-    [[ -f "$DRVFILE" ]] || {
-        echo "No .drv file found in this project. Use \`drv set <version>\` to set it"
-        exit 1
+    [[ "$DR_ZIP" =~ \.zip$ ]] || {
+        echo "The file provided is not a DragonRuby zip"
+        return 1
     }
 
-    local CURRENT_VERSION=`cat $DRVFILE`
-    PATH=$INSTALL_DIR/$CURRENT_VERSION:$PATH dragonruby $GAME_DIR
-}
-
-function install_version ()
-{
-    local SOURCE=$1
-
-    [[ -d "$SOURCE" ]] || {
-        echo "The path is not a DragonRuby installation directory"
-        exit 1
-    }
-    [[ -f "$SOURCE/dragonruby" ]] || {
-        echo "There's not dragonruby executable. Is $SOURCE a DragonRuby installation directory?"
-        exit 1
+    rm -rf $INSTALL_DIR/tmp && mkdir -p $INSTALL_DIR/tmp
+    unzip -qq $DR_ZIP -d $INSTALL_DIR/tmp || {
+      echo "File extraction failed: unzip $DR_ZIP -d $INSTALL_DIR/tmp"
+      return 1
     }
 
-    local VERSION=`head -n 1 $1/CHANGELOG-CURR.txt | cut -d" " -f2 | sed 's/ *$//g'`
+    SOURCE=$(echo $INSTALL_DIR/tmp/*)
+
+    [[ -x "$SOURCE/dragonruby" ]] || {
+        echo "There's not dragonruby executable inside the zip file. Is $DR_ZIP a DragonRuby installation?"
+        return 1
+    }
+
+    local VERSION=`head -n 1 $SOURCE/CHANGELOG-CURR.txt | cut -d" " -f2 | sed 's/ *$//g'`
     echo "DragonRuby $VERSION detected."
 
     local TARGET=$INSTALL_DIR/$VERSION
 
     [[ -d $TARGET ]] && {
         echo "DragonRuby $VERSION is already installed. You can uninstall it running \`drv uninstall $VERSION\`"
-        exit 1
+        return 1
     }
 
-    cp -r $SOURCE $TARGET 
-    set_version $VERSION
+    mv -r $SOURCE $TARGET
+    rm -rf $INSTALL_DIR/tmp
+
+    drv__use_version $VERSION
     echo "DragonRuby $VERSION installed and activated."
+
 }
 
-function uninstall_version () 
+function drv__uninstall_version()
 {
     rm -r "$INSTALL_DIR/$1"
     echo "DragonRuby version $1 uninstalled"
 }
 
-cmd=$1
+function drv__setup()
+{
+  local DIR=$1
+  local VERSION=$2
 
-case "$cmd" in
-  list) 
-    list_versions
-  ;;
-  set)
-    set_version $2
-  ;;
-  install)
-    install_version $2
-  ;;
-  uninstall)
-    uninstall_version $2
-  ;;
-  run)
-    run_game $2
-  ;;
-  "")
-    echo -e $ABOUT
-    echo -e $HELP
-  ;;
-  *)
-  echo "invalid command \`$cmd\`. Available commands are: "
-  echo -e $HELP
-esac
+  [[ -z "$DIR" ]] && {
+    echo "Must specify a directory name for your game"
+    return 1
+  }
+
+  [[ -z "$VERSION" ]] && {
+    echo "Must specify a DragonRuby version to use"
+    return 1
+  }
+
+  echo "Warning: This will override your project's metadata and other engine files needed for building your game with factory defaults."
+
+  read -p "Do you want to continue (yes)? " PROCEED
+  [[ "$PROCEED" != "yes" ]] && return 0
+
+  mkdir -p $DIR/mygame && cd $DIR
+  which git && git init .
+
+  drv__use_version $VERSION
+
+  cp -r $DRAGON_RUBY_PATH/{.dragonruby,open-source-licenses.txt,CHANGELOG-CURR.txt,CHANGELOG-PREV.txt,console-logo.png,dragonruby-controller.png,dragonruby.png} .
+  echo -e $GIT_IGNORE > .gitignore
+  echo $VERSION >> .drv
+
+  echo "Done! Project set up successfully"
+}
+
+
+function drv__use_version_from_file()
+{
+    local DIR="$PWD/"
+    local VERSION=""
+
+    until [[ -z "$DIR" ]]; do
+        DIR="${DIR%/*}" # parent dir
+        if { read -r VERSION < "$DIR/.drv"; } 2>/dev/null || [[ -n "$VERSION" ]]; then
+            if [[ "$VERSION" == "$DRAGON_RUBY_VERSION" ]]; then
+                return 0
+            else
+                drv__use_version "$VERSION"
+                return $?
+            fi
+        fi
+    done
+
+}
+
+
+function drv()
+{
+    CMD=$1
+    case "$CMD" in
+        versions)
+            drv__list_versions
+        ;;
+        use)
+            drv__use_version $2
+        ;;
+        install)
+            drv__install_version $2
+        ;;
+        uninstall)
+            drv__uninstall_version $2
+        ;;
+        setup)
+            drv__setup $2 $3
+        ;;
+        "")
+            echo -e $ABOUT
+            echo -e $HELP
+        ;;
+        *)
+            echo "invalid command \`$CMD\`. Available commands are: "
+            echo -e $HELP
+    esac
+}
+
+trap '[[ "$BASH_COMMAND" != "$PROMPT_COMMAND" ]] && drv__use_version_from_file' DEBUG
