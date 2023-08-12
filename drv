@@ -103,7 +103,7 @@ function drv__install_version()
         return 1
     }
 
-    mv -r $SOURCE $TARGET
+    mv $SOURCE $TARGET
     rm -rf $INSTALL_DIR/tmp
 
     drv__use_version $VERSION
